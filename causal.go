@@ -49,6 +49,10 @@ type Dependency struct {
 	Version Version `json:"version"`
 }
 
+func (c Dependency) String() string {
+	return fmt.Sprintf("<%d, %d>", c.Version.Timestamp, c.Version.DCId)
+}
+
 type StoreObject struct {
 	key string
 	value string
@@ -67,6 +71,7 @@ type DataCenter struct {
 	serverListener net.Listener
 	listenPort string
 	conns map[string]net.Conn
+	connDelay map[string]time.Duration
 	connMut *sync.RWMutex
 	exitChan chan bool
 }
@@ -241,7 +246,7 @@ func (d DataCenter) handleConnection(conn net.Conn) {
 
 func (d* DataCenter) write(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Usage: write key value")
+		fmt.Println("Usage: write key value [delay]")
 		return
 	}
 	key := args[0]
@@ -281,8 +286,11 @@ func (d* DataCenter) write(args []string) {
 
 	go func(storeObj StoreObject, req Packet) {
 		d.connMut.RLock()
-		for _, conn := range d.conns {
-			d := time.Second * time.Duration(rand.Intn(60))
+		for addr, conn := range d.conns {
+			d := d.connDelay[addr]
+			if d == 0 {
+				d = time.Second * time.Duration(rand.Intn(60))
+			}
 			fmt.Printf(" [debug] Delaying the replication to %s by %0.3f seconds\n", conn.RemoteAddr().String(), d.Seconds())
 			go func(conn net.Conn, req Packet, d time.Duration) {
 				time.Sleep(d)
@@ -427,17 +435,22 @@ func (d *DataCenter) safeExit(args []string) {
 
 func (d *DataCenter) connect(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Usage: start server_ip port")
+		fmt.Println("Usage: start server_ip port [delay]")
 		return
 	}
 
 	remoteAddr := strings.Join(args[:2], ":")
+	delay := 0
+	if len(args) > 2 {
+		delay, _ = strconv.Atoi(args[2])
+	}
 	conn, err := net.Dial("tcp", remoteAddr)
 	if err != nil {
 		fmt.Printf(" [error] Connection failed to server %s\n", remoteAddr)
 	}
 	d.connMut.Lock()
 	d.conns[remoteAddr] = conn
+	d.connDelay[remoteAddr] = time.Second * time.Duration(delay)
 	d.connMut.Unlock()
 
 	sendRequest(conn, Packet{
@@ -529,6 +542,7 @@ var (
 		storeMut: &sync.RWMutex{},
 		deferred: make(map[string][]*StoreObject),
 		conns: make(map[string]net.Conn),
+		connDelay: make(map[string]time.Duration),
 		connMut: &sync.RWMutex{},
 		serverListener: nil,
 		curDep: make([]Dependency, 0),
