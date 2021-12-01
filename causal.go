@@ -302,6 +302,10 @@ func (d* DataCenter) write(args []string) {
 	}(storeObj, repReq)
 	// nil is well defined to clear the slices.
 	d.curDep = nil
+	d.updateDependency(Dependency{
+		key,
+		version,
+	})
 	fmt.Printf(" [debug] Successfully wrote to store with new version: <%d, %d>\n", version.Timestamp, version.DCId)
 	d.storeMut.Unlock()
 }
@@ -315,6 +319,9 @@ func (d *DataCenter) recurReplicatedWrites(storeObject StoreObject) {
 		var u = make([]*StoreObject, len(deps))
 		copy(u, deps)
 		for i, obj := range deps {
+			if len(obj.dep) == 0 {
+				continue
+			}
 			dep := obj.dep[0]
 			if len(obj.dep) == 1 && dep.Key == storeObject.key &&
 				// TODO: Double check this
